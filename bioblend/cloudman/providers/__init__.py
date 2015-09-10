@@ -3,6 +3,12 @@ A cloud provider abstract interface.
 """
 from six import with_metaclass
 from abc import ABCMeta, abstractmethod
+import logging
+logging.captureWarnings(True)
+
+# Uncomment the following lines if logging at the prompt is desired
+# import bioblend
+# bioblend.set_stream_logger(__name__)
 
 
 class AbstractCloudProvider(with_metaclass(ABCMeta)):
@@ -12,7 +18,13 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
         """
         Connection properties for a cloud provider (see specific implementaions).
         """
-        pass
+        self.ports = ((20, 21),  # FTP
+                      (22, 22),  # SSH
+                      (80, 80),  # Web UI
+                      (443, 443),  # SSL Web UI
+                      (8800, 8800),  # NodeJS Proxy for Galaxy IPython IE
+                      # (9600, 9700),  # HTCondor
+                      (30000, 30100))  # FTP transfer
 
     @abstractmethod
     def create_security_group(self, sg_name="CloudMan"):
@@ -59,6 +71,9 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
     def get_all_key_pairs(self):
         """
         Get all key pairs associated with your account.
+
+        :rtype: list
+        :return: A list of ssh key pairs for this account.
         """
         pass
 
@@ -130,3 +145,15 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
             - ``error`` - an error message if an error was encountered.
         """
         pass
+
+    def rule_exists(self, rules, from_port, to_port, ip_protocol='tcp'):
+        """
+        A convenience method to check if an authorization rule in a security group
+        already exists.
+        """
+        for rule in rules:
+            if (rule.get('ip_protocol') == ip_protocol and
+               int(rule.get('from_port', 0)) == from_port and
+               int(rule.get('to_port', 0)) == to_port):
+                return True
+        return False

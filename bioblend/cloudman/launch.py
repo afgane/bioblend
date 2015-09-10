@@ -2,8 +2,9 @@
 Setup and launch a CloudMan cluster.
 """
 from bioblend.cloudman.providers import ec2_boto
-# from bioblend.cloudman.providers import openstack_nova
+from bioblend.cloudman.providers import openstack_nova
 
+# import bioblend
 # Uncomment the following line if no logging from boto is desired
 # bioblend.logging.getLogger('boto').setLevel(bioblend.logging.CRITICAL)
 # Uncomment the following line if logging at the prompt is desired
@@ -59,17 +60,19 @@ class CloudManLauncher(object):
         """
         Define the environment in which this instance of CloudMan will be launched.
 
-        :type config: :py:class:`bioblend.util.Bunch`
+        :type config: :py:class:`bioblend.util.Bunch` or an object with the
+                      required keys (see provider implementations)
         :param config: A configuration object containing cloud connection info.
                        The object must contain user access credentials as well
                        as cloud access info. See the implementation class for
                        the chosen cloud provider for the required field details.
         """
         self.cloud_provider = None
+        self.config = config
         if config.cloud_type == 'ec2':
             self.cloud_provider = ec2_boto.BotoCloudProvider(config)
-        # elif config.cloud_type == 'openstack':
-        #     self.cloud_provider = openstack_nova.NovaCloudProvider(config)
+        elif config.cloud_type == 'openstack':
+            self.cloud_provider = openstack_nova.NovaCloudProvider(config)
 
     def __repr__(self):
         return "CloudManLauncher for {0}".format(self.config.name)

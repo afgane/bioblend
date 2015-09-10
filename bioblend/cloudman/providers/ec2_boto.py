@@ -48,6 +48,7 @@ class BotoCloudProvider(AbstractCloudProvider):
                        - ``s3_port`` - S3 service port;
                        - ``s3_conn_path`` - S3 service connection path.
         """
+        super(BotoCloudProvider, self).__init__()
         self.access_key = config.access_key
         self.secret_key = config.secret_key
         self.cloud = config
@@ -169,16 +170,9 @@ class BotoCloudProvider(AbstractCloudProvider):
         .. versionchanged:: 0.6.1
             The return value changed from a string to a dict
         """
-        ports = (('20', '21'),  # FTP
-                 ('22', '22'),  # SSH
-                 ('80', '80'),  # Web UI
-                 ('443', '443'),  # SSL Web UI
-                 ('8800', '8800'),  # NodeJS Proxy for Galaxy IPython IE
-                 ('9600', '9700'),  # HTCondor
-                 ('30000', '30100'))  # FTP transfer
         progress = {'name': None,
                     'error': None,
-                    'ports': ports}
+                    'ports': self.ports}
         cmsg = None
         # Check if this security group already exists
         try:
@@ -213,7 +207,7 @@ class BotoCloudProvider(AbstractCloudProvider):
             progress['name'] = cmsg.name
             # Add appropriate authorization rules
             # If these rules already exist, nothing will be changed in the SG
-            for port in ports:
+            for port in self.ports:
                 try:
                     if not self.rule_exists(cmsg.rules, from_port=port[0], to_port=port[1]):
                         cmsg.authorize(ip_protocol='tcp', from_port=port[0], to_port=port[1], cidr_ip='0.0.0.0/0')
@@ -259,17 +253,6 @@ class BotoCloudProvider(AbstractCloudProvider):
         else:
             bioblend.log.warning("Did not create security group '{0}'".format(sg_name))
         return progress
-
-    def rule_exists(self, rules, from_port, to_port, ip_protocol='tcp', cidr_ip='0.0.0.0/0'):
-        """
-        A convenience method to check if an authorization rule in a security group
-        already exists.
-        """
-        for rule in rules:
-            if rule.ip_protocol == ip_protocol and rule.from_port == from_port and \
-               rule.to_port == to_port and cidr_ip in [ip.cidr_ip for ip in rule.grants]:
-                return True
-        return False
 
     def create_key_pair(self, key_name='cloudman_key_pair'):
         """
@@ -705,7 +688,6 @@ class BotoCloudProvider(AbstractCloudProvider):
         Get all key pairs associated with your account.
         """
         try:
-            bioblend.log.debug("Getting all key pairs.")
             return self.ec2_conn.get_all_key_pairs()
         except EC2ResponseError as ec2e:
             bioblend.log.error("EC2ResponseError getting all key pairs: {0}"
