@@ -11,9 +11,6 @@ from boto.compat import http_client
 from boto.ec2.regioninfo import RegionInfo
 from boto.exception import EC2ResponseError, S3ResponseError
 from boto.s3.connection import OrdinaryCallingFormat, S3Connection, SubdomainCallingFormat
-import six
-from six.moves.http_client import HTTPConnection
-from six.moves.urllib.parse import urlparse
 
 import bioblend
 from bioblend.cloudman.providers import AbstractCloudProvider
@@ -61,8 +58,8 @@ class BotoCloudProvider(AbstractCloudProvider):
         return "Cloud: {0}; acct ID: {1}".format(self.cloud.name, self.access_key)
 
     def launch(self, cluster_name, image_id, instance_type, password,
-               kernel_id=None, ramdisk_id=None, key_name='cloudman_key_pair',
-               security_groups=['CloudMan'], placement='', **kwargs):
+               key_name='cloudman_key_pair', security_groups=['CloudMan'],
+               placement='', **kwargs):
         """
         Check all the prerequisites (key pair and security groups) for
         launching a CloudMan instance, compose the user data based on the
@@ -123,8 +120,6 @@ class BotoCloudProvider(AbstractCloudProvider):
                                              key_name=key_name,
                                              security_groups=security_groups,
                                              user_data=ud,
-                                             kernel_id=kernel_id,
-                                             ramdisk_id=ramdisk_id,
                                              placement=placement)
             ret['rs'] = rs
         except EC2ResponseError as e:
@@ -485,44 +480,17 @@ class BotoCloudProvider(AbstractCloudProvider):
             path=ci['s3_conn_path'], calling_format=calling_format)
         return s3_conn
 
-    def compose_user_data(self, user_provided_data):
-        """
-        A convenience method used to compose and properly format the user data
-        required when requesting an instance.
-
-        ``user_provided_data`` is the data provided by a user required to identify
-        a cluster and user other user requirements.
-        """
-        form_data = {}
-        # Do not include the following fields in the user data but do include
-        # any 'advanced startup fields' that might be added in the future
-        excluded_fields = ['sg_name', 'image_id', 'instance_id', 'kp_name',
-                           'cloud', 'cloud_type', 'public_dns', 'cidr_range',
-                           'kp_material', 'placement', 'flavor_id']
-        for key, value in six.iteritems(user_provided_data):
-            if key not in excluded_fields:
-                form_data[key] = value
-        # If the following user data keys are empty, do not include them in the request user data
-        udkeys = ['post_start_script_url', 'worker_post_start_script_url', 'bucket_default', 'share_string']
-        for udkey in udkeys:
-            if udkey in form_data and form_data[udkey] == '':
-                del form_data[udkey]
-        # If bucket_default was not provided, add a default value to the user data
-        # (missing value does not play nicely with CloudMan's ec2autorun.py)
-        if not form_data.get('bucket_default', None) and self.cloud.bucket_default:
-            form_data['bucket_default'] = self.cloud.bucket_default
-        # Reuse the ``password`` for the ``freenxpass`` user data option
-        if 'freenxpass' not in form_data and 'password' in form_data:
-            form_data['freenxpass'] = form_data['password']
-        # Convert form_data into the YAML format
-        ud = yaml.dump(form_data, default_flow_style=False, allow_unicode=False)
-        # Also include connection info about the selected cloud
-        ci = self._get_cloud_info(self.cloud, as_str=True)
-        return ud + "\n" + ci
-
     def _get_cloud_info(self, cloud, as_str=False):
         """
-        Get connection information about a given cloud
+        Return cloud connection properties used by this object.
+
+        :type as_str: bool
+        :param as_str: If set, the method returns a `str` else return a ``dict``.
+
+        :rtype: dict or str
+        :return: Get all the cloud-connection parameters used in this object
+                 and return them as a dict or a string with on key-value per
+                 line.
         """
         ci = {}
         ci['cloud_type'] = cloud.cloud_type
@@ -664,24 +632,6 @@ class BotoCloudProvider(AbstractCloudProvider):
                 bioblend.log.error(response['error'])
                 zones.append(back_compatible_zone)
         return response
-
-    def _checkURL(self, url):
-        """
-        Check if the ``url`` is *alive* (i.e., remote server returns code 200(OK)
-        or 401 (unauthorized)).
-        """
-        try:
-            p = urlparse(url)
-            h = HTTPConnection(p[1])
-            h.putrequest('HEAD', p[2])
-            h.endheaders()
-            r = h.getresponse()
-            if r.status in (200, 401):  # CloudMan UI is pwd protected so include 401
-                return True
-        except Exception:
-            # No response or no good response
-            pass
-        return False
 
     def get_all_key_pairs(self):
         """

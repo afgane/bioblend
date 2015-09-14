@@ -1,6 +1,10 @@
 """
 A cloud provider abstract interface.
 """
+import six
+import yaml
+from six.moves.http_client import HTTPConnection
+from six.moves.urllib.parse import urlparse
 from six import with_metaclass
 from abc import ABCMeta, abstractmethod
 import logging
@@ -54,8 +58,8 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
         The key will be created only if a key pair with the provided name does
         not already exist.
 
-        :type sg_name: str
-        :param sg_name: A name for the key pair to be created.
+        :type key_name: str
+        :param key_name: A name for the key pair to be created.
 
         :rtype: dict
         :return: A dictionary containing keys ``name`` (with the value being the
@@ -79,14 +83,39 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
 
     @abstractmethod
     def launch(self, cluster_name, image_id, instance_type, password,
-               kernel_id=None, ramdisk_id=None, key_name='cloudman_key_pair',
-               security_groups=['CloudMan'], placement='', **kwargs):
+               key_name='cloudman_key_pair', security_groups=['CloudMan'],
+               placement='', **kwargs):
         """
         Start a new cluster with the given parameters.
 
         In addition to the arguments from the method signature, additional
         ``kwargs`` parameters can be specified that correspond to CloudMan's
         user data, see `<http://wiki.g2.bx.psu.edu/CloudMan/UserData>`_
+
+        :type cluster_name: str
+        :param cluster_name: A name of a CloudMan cluster. This can be a name
+                             for a new cluster or from a saved cluster.
+
+        :type image_id: str
+        :param image_id: Image identifier.
+
+        :type instance_type: str
+        :param instance_type: API name of the instance type (e.g., m1.large).
+
+        :type password: str
+        :param password: A plain text password to be used for accessing
+                         CloudMan and the rest of the cluster.
+
+        :type key_name: str
+        :param key_name: SSH key pair name.
+
+        :type security_groups: list
+        :param security_groups: A list of strings specifying security group
+                                names with which the cluster should be launched.
+
+        :type placement: str
+        :param placement: Cloud zone/region identifier where to launch the
+                          cluster.
 
         :rtype: dict
         :return: The properties and info with which an instance was launched:
@@ -122,6 +151,13 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
         cluster is being recreated, in which case the cluster's placement zone is
         returned sa stored in its persistent data.
 
+        :type instance_type: str
+        :param instance_type: API name of the instance type (e.g., m1.large)
+
+        :type cluster_name: str
+        :param cluster_name: A name of a CloudMan cluster whose placement to
+                             search for.
+
         :rtype: dict
         :return: A dictionary with ``zones`` and ``error`` keywords.
         """
@@ -146,6 +182,21 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
         """
         pass
 
+    @abstractmethod
+    def _get_cloud_info(self, cloud_info, as_str=False):
+        """
+        Return cloud connection properties used by this object.
+
+        :type as_str: bool
+        :param as_str: If set, the method returns a `str` else return a ``dict``.
+
+        :rtype: dict or str
+        :return: Get all the cloud-connection parameters used in this object
+                 and return them as a dict or a string with on key-value per
+                 line.
+        """
+        pass
+
     def rule_exists(self, rules, from_port, to_port, ip_protocol='tcp'):
         """
         A convenience method to check if an authorization rule in a security group
@@ -156,4 +207,61 @@ class AbstractCloudProvider(with_metaclass(ABCMeta)):
                int(rule.get('from_port', 0)) == from_port and
                int(rule.get('to_port', 0)) == to_port):
                 return True
+        return False
+
+    def compose_user_data(self, user_provided_data):
+        """
+        A convenience method used to compose and properly format the user data
+        required when requesting an instance.
+
+        :type user_provided_data: dict
+        :param user_provided_data: Data provided by a user required to identify
+                                   a cluster and other user requirements.
+
+        :rtype: str
+        :return: User data formatted as a string with one key-value per line.
+        """
+        form_data = {}
+        # Do not include the following fields in the user data but do include
+        # any 'advanced startup fields' that might be added in the future
+        excluded_fields = ['sg_name', 'image_id', 'instance_id', 'kp_name',
+                           'cloud', 'cloud_type', 'public_dns', 'cidr_range',
+                           'kp_material', 'placement', 'flavor_id']
+        for key, value in six.iteritems(user_provided_data):
+            if key not in excluded_fields:
+                form_data[key] = value
+        # If the following user data keys are empty, do not include them in the request user data
+        udkeys = ['post_start_script_url', 'worker_post_start_script_url', 'bucket_default', 'share_string']
+        for udkey in udkeys:
+            if udkey in form_data and form_data[udkey] == '':
+                del form_data[udkey]
+        # If bucket_default was not provided, add a default value to the user data
+        # (missing value does not play nicely with CloudMan's ec2autorun.py)
+        if not form_data.get('bucket_default', None) and self.cloud.bucket_default:
+            form_data['bucket_default'] = self.cloud.bucket_default
+        # Reuse the ``password`` for the ``freenxpass`` user data option
+        if 'freenxpass' not in form_data and 'password' in form_data:
+            form_data['freenxpass'] = form_data['password']
+        # Convert form_data into the YAML format
+        ud = yaml.dump(form_data, default_flow_style=False, allow_unicode=False)
+        # Also include connection info about the selected cloud
+        ci = self._get_cloud_info(self.cloud, as_str=True)
+        return ud + "\n" + ci
+
+    def _checkURL(self, url):
+        """
+        Check if the ``url`` is *alive* (i.e., remote server returns code 200(OK)
+        or 401 (unauthorized)).
+        """
+        try:
+            p = urlparse(url)
+            h = HTTPConnection(p[1])
+            h.putrequest('HEAD', p[2])
+            h.endheaders()
+            r = h.getresponse()
+            if r.status in (200, 401):  # CloudMan UI is pwd protected so include 401
+                return True
+        except Exception:
+            # No response or no good response
+            pass
         return False
